@@ -1195,7 +1195,7 @@ static ssize_t debugfs_misr_read(struct file *file,
 		return 0;
 
 	buf = kzalloc(max_len, GFP_KERNEL);
-	if (!buf)
+	if (ZERO_OR_NULL_PTR(buf))
 		return -ENOMEM;
 
 	mutex_lock(&display->display_lock);
@@ -1285,7 +1285,7 @@ static ssize_t debugfs_esd_trigger_check(struct file *file,
 		rc = dsi_panel_trigger_esd_attack(display->panel);
 		if (rc) {
 			pr_err("Failed to trigger ESD attack\n");
-			return rc;
+			goto error;
 		}
 	}
 
@@ -1313,7 +1313,7 @@ static ssize_t debugfs_alter_esd_check_mode(struct file *file,
 		return 0;
 
 	buf = kzalloc(len, GFP_KERNEL);
-	if (!buf)
+	if (ZERO_OR_NULL_PTR(buf))
 		return -ENOMEM;
 
 	if (copy_from_user(buf, user_buf, user_len)) {
@@ -1400,7 +1400,7 @@ static ssize_t debugfs_read_esd_check_mode(struct file *file,
 	}
 
 	buf = kzalloc(len, GFP_KERNEL);
-	if (!buf)
+	if (ZERO_OR_NULL_PTR(buf))
 		return -ENOMEM;
 
 	esd_config = &display->panel->esd_config;
@@ -5277,18 +5277,16 @@ int dsi_display_get_modes(struct dsi_display *display,
 		return -EINVAL;
 	}
 
-	mutex_lock(&display->display_lock);
-	if (display->modes) {
-		pr_debug("return existing mode list\n");
-		goto done;
-	}
-
 	*out_modes = NULL;
+
+	mutex_lock(&display->display_lock);
+
+	if (display->modes)
+		goto exit;
 
 	rc = dsi_display_get_mode_count_no_lock(display, &total_mode_count);
 	if (rc)
 		goto error;
-
 
 	display->modes = kcalloc(total_mode_count, sizeof(*display->modes),
 			GFP_KERNEL);
@@ -5368,7 +5366,7 @@ int dsi_display_get_modes(struct dsi_display *display,
 		}
 	}
 
-done:
+exit:
 	*out_modes = display->modes;
 	rc = 0;
 
