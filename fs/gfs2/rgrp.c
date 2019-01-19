@@ -1705,9 +1705,9 @@ static int gfs2_rbm_find(struct gfs2_rbm *rbm, u8 state, u32 *minext,
 			goto next_iter;
 		}
 		if (ret == -E2BIG) {
+			n += rbm->bii - initial_bii;
 			rbm->bii = 0;
 			rbm->offset = 0;
-			n += (rbm->bii - initial_bii);
 			goto res_covered_end_of_rgrp;
 		}
 		return ret;
@@ -2601,8 +2601,9 @@ void gfs2_rlist_alloc(struct gfs2_rgrp_list *rlist, unsigned int state)
 {
 	unsigned int x;
 
-	rlist->rl_ghs = kmalloc(rlist->rl_rgrps * sizeof(struct gfs2_holder),
-				GFP_NOFS | __GFP_NOFAIL);
+	rlist->rl_ghs = kmalloc_array(rlist->rl_rgrps,
+				      sizeof(struct gfs2_holder),
+				      GFP_NOFS | __GFP_NOFAIL);
 	for (x = 0; x < rlist->rl_rgrps; x++)
 		gfs2_holder_init(rlist->rl_rgd[x]->rd_gl,
 				state, 0,

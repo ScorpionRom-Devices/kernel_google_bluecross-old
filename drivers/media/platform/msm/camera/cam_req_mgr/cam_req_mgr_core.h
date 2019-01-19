@@ -32,6 +32,8 @@
 
 #define MAX_SYNC_COUNT 65535
 
+#define MAXIMUM_LINKS_PER_SESSION  4
+
 /**
  * enum crm_workq_task_type
  * @codes: to identify which type of task is present
@@ -43,6 +45,7 @@ enum crm_workq_task_type {
 	CRM_WORKQ_TASK_APPLY_REQ,
 	CRM_WORKQ_TASK_NOTIFY_SOF,
 	CRM_WORKQ_TASK_NOTIFY_ERR,
+	CRM_WORKQ_TASK_NOTIFY_FREEZE,
 	CRM_WORKQ_TASK_SCHED_REQ,
 	CRM_WORKQ_TASK_FLUSH_REQ,
 	CRM_WORKQ_TASK_INVALID,
@@ -162,11 +165,13 @@ struct cam_req_mgr_apply {
  * @idx           : slot index
  * @req_ready_map : mask tracking which all devices have request ready
  * @state         : state machine for life cycle of a slot
+ * @inject_delay  : insert extra bubbling for flash type of use cases
  */
 struct cam_req_mgr_tbl_slot {
 	int32_t             idx;
 	uint32_t            req_ready_map;
 	enum crm_req_state  state;
+	uint32_t            inject_delay;
 };
 
 /**
@@ -181,7 +186,6 @@ struct cam_req_mgr_tbl_slot {
  * @pd_delta      : differnce between this table's pipeline delay and next
  * @num_slots     : number of request slots present in the table
  * @slot          : array of slots tracking requests availability at devices
- * @inject_delay  : insert extra bubbling for flash type of use cases
  */
 struct cam_req_mgr_req_tbl {
 	int32_t                     id;
@@ -193,7 +197,6 @@ struct cam_req_mgr_req_tbl {
 	int32_t                     pd_delta;
 	int32_t                     num_slots;
 	struct cam_req_mgr_tbl_slot slot[MAX_REQ_SLOTS];
-	uint32_t                    inject_delay;
 };
 
 /**
@@ -339,7 +342,7 @@ struct cam_req_mgr_core_link {
 struct cam_req_mgr_core_session {
 	int32_t                       session_hdl;
 	uint32_t                      num_links;
-	struct cam_req_mgr_core_link *links[MAX_LINKS_PER_SESSION];
+	struct cam_req_mgr_core_link *links[MAXIMUM_LINKS_PER_SESSION];
 	struct list_head              entry;
 	struct mutex                  lock;
 	int32_t                       force_err_recovery;

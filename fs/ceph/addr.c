@@ -373,7 +373,7 @@ static int start_read(struct inode *inode, struct list_head *page_list, int max)
 
 	/* build page vector */
 	nr_pages = calc_pages_for(0, len);
-	pages = kmalloc(sizeof(*pages) * nr_pages, GFP_KERNEL);
+	pages = kmalloc_array(nr_pages, sizeof(*pages), GFP_KERNEL);
 	if (!pages) {
 		ret = -ENOMEM;
 		goto out_put;
@@ -838,21 +838,15 @@ retry:
 		struct page **pages = NULL, **data_pages;
 		mempool_t *pool = NULL;	/* Becomes non-null if mempool used */
 		struct page *page;
-		int want;
 		u64 offset = 0, len = 0;
 
 		max_pages = max_pages_ever;
 
 get_more_pages:
 		first = -1;
-		want = min(end - index,
-			   min((pgoff_t)PAGEVEC_SIZE,
-			       max_pages - (pgoff_t)locked_pages) - 1)
-			+ 1;
-		pvec_pages = pagevec_lookup_tag(&pvec, mapping, &index,
-						PAGECACHE_TAG_DIRTY,
-						want);
-		dout("pagevec_lookup_tag got %d\n", pvec_pages);
+		pvec_pages = pagevec_lookup_range_tag(&pvec, mapping, &index,
+						end, PAGECACHE_TAG_DIRTY);
+		dout("pagevec_lookup_range_tag got %d\n", pvec_pages);
 		if (!pvec_pages && !locked_pages)
 			break;
 		for (i = 0; i < pvec_pages && locked_pages < max_pages; i++) {
@@ -867,12 +861,6 @@ get_more_pages:
 			if (unlikely(!PageDirty(page)) ||
 			    unlikely(page->mapping != mapping)) {
 				dout("!dirty or !mapping %p\n", page);
-				unlock_page(page);
-				break;
-			}
-			if (!wbc->range_cyclic && page->index > end) {
-				dout("end of range %p\n", page);
-				done = 1;
 				unlock_page(page);
 				break;
 			}
@@ -945,8 +933,9 @@ get_more_pages:
 
 				BUG_ON(pages);
 				max_pages = calc_pages_for(0, (u64)len);
-				pages = kmalloc(max_pages * sizeof (*pages),
-						GFP_NOFS);
+				pages = kmalloc_array(max_pages,
+						      sizeof(*pages),
+						      GFP_NOFS);
 				if (!pages) {
 					pool = fsc->wb_pagevec_pool;
 					pages = mempool_alloc(pool, GFP_NOFS);
@@ -1099,8 +1088,8 @@ new_request:
 
 			/* allocate new pages array for next request */
 			data_pages = pages;
-			pages = kmalloc(locked_pages * sizeof (*pages),
-					GFP_NOFS);
+			pages = kmalloc_array(locked_pages, sizeof(*pages),
+					      GFP_NOFS);
 			if (!pages) {
 				pool = fsc->wb_pagevec_pool;
 				pages = mempool_alloc(pool, GFP_NOFS);

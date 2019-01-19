@@ -11,6 +11,7 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/vmalloc.h>
 #include "cam_sensor_util.h"
 #include <cam_mem_mgr.h>
 #include "cam_res_mgr_api.h"
@@ -37,8 +38,8 @@ static struct i2c_settings_list*
 		return NULL;
 
 	tmp->i2c_settings.reg_setting = (struct cam_sensor_i2c_reg_array *)
-		kzalloc(sizeof(struct cam_sensor_i2c_reg_array) *
-		size, GFP_KERNEL);
+		kcalloc(size, sizeof(struct cam_sensor_i2c_reg_array),
+				GFP_KERNEL);
 	if (tmp->i2c_settings.reg_setting == NULL) {
 		list_del(&(tmp->list));
 		kfree(tmp);
@@ -93,12 +94,10 @@ int32_t cam_sensor_handle_delay(
 			list_entry(list_ptr, struct i2c_settings_list, list);
 		if (generic_op_code ==
 			CAMERA_SENSOR_WAIT_OP_HW_UCND)
-			i2c_list->i2c_settings.
-				reg_setting[offset - 1].delay =
+			i2c_list->i2c_settings.reg_setting[offset - 1].delay =
 				cmd_uncond_wait->delay;
 		else
-			i2c_list->i2c_settings.delay =
-				cmd_uncond_wait->delay;
+			i2c_list->i2c_settings.delay = cmd_uncond_wait->delay;
 		(*cmd_buf) +=
 			sizeof(
 			struct cam_cmd_unconditional_wait) / sizeof(uint32_t);
@@ -184,14 +183,10 @@ int32_t cam_sensor_handle_random_write(
 	for (cnt = 0; cnt < (cam_cmd_i2c_random_wr->header.count);
 		cnt++) {
 		i2c_list->i2c_settings.reg_setting[cnt].reg_addr =
-			cam_cmd_i2c_random_wr->
-			random_wr_payload[cnt].reg_addr;
-		i2c_list->i2c_settings.
-			reg_setting[cnt].reg_data =
-			cam_cmd_i2c_random_wr->
-			random_wr_payload[cnt].reg_data;
-		i2c_list->i2c_settings.
-			reg_setting[cnt].data_mask = 0;
+			cam_cmd_i2c_random_wr->random_wr_payload[cnt].reg_addr;
+		i2c_list->i2c_settings.reg_setting[cnt].reg_data =
+			cam_cmd_i2c_random_wr->random_wr_payload[cnt].reg_data;
+		i2c_list->i2c_settings.reg_setting[cnt].data_mask = 0;
 	}
 	*offset = cnt;
 	*list = &(i2c_list->list);
@@ -239,20 +234,52 @@ static int32_t cam_sensor_handle_continuous_write(
 	for (cnt = 0; cnt < (cam_cmd_i2c_continuous_wr->header.count);
 		cnt++) {
 		i2c_list->i2c_settings.reg_setting[cnt].reg_addr =
-			cam_cmd_i2c_continuous_wr->
-			reg_addr;
-		i2c_list->i2c_settings.
-			reg_setting[cnt].reg_data =
-			cam_cmd_i2c_continuous_wr->
-			data_read[cnt].reg_data;
-		i2c_list->i2c_settings.
-			reg_setting[cnt].data_mask = 0;
+			cam_cmd_i2c_continuous_wr->reg_addr;
+		i2c_list->i2c_settings.reg_setting[cnt].reg_data =
+			cam_cmd_i2c_continuous_wr->data_read[cnt].reg_data;
+		i2c_list->i2c_settings.reg_setting[cnt].data_mask = 0;
 	}
 	*offset = cnt;
 	*list = &(i2c_list->list);
 
 	return rc;
 }
+
+static int cam_sensor_handle_slave_info(
+	struct camera_io_master *io_master,
+	uint32_t *cmd_buf)
+{
+	int rc = 0;
+	struct cam_cmd_i2c_info *i2c_info = (struct cam_cmd_i2c_info *)cmd_buf;
+
+	if (io_master == NULL || cmd_buf == NULL) {
+		CAM_ERR(CAM_SENSOR, "Invalid args");
+		return -EINVAL;
+	}
+
+	switch (io_master->master_type) {
+	case CCI_MASTER:
+		io_master->cci_client->sid = (i2c_info->slave_addr >> 1);
+		io_master->cci_client->i2c_freq_mode = i2c_info->i2c_freq_mode;
+		break;
+
+	case I2C_MASTER:
+		io_master->client->addr = i2c_info->slave_addr;
+		break;
+
+	case SPI_MASTER:
+		break;
+
+	default:
+		CAM_ERR(CAM_SENSOR, "Invalid master type: %d",
+			io_master->master_type);
+		rc = -EINVAL;
+		break;
+	}
+
+	return rc;
+}
+
 
 int32_t cam_sensor_handle_read(
 	struct cam_cmd_i2c_continuous_rd *cam_cmd,
@@ -300,12 +327,16 @@ int32_t cam_sensor_handle_read(
  * WAIT + n x RND_WR with num_cmd_buf = 1. Do not exepect RD/WR
  * with different cmd_type and op_code in one command buffer.
  */
-int cam_sensor_i2c_command_parser(struct i2c_settings_array *i2c_reg_settings,
-	struct cam_cmd_buf_desc   *cmd_desc, int32_t num_cmd_buffers)
+int cam_sensor_i2c_command_parser(
+	struct camera_io_master *io_master,
+	struct i2c_settings_array *i2c_reg_settings,
+	struct cam_cmd_buf_desc   *cmd_desc,
+	int32_t num_cmd_buffers)
 {
 	int16_t                   rc = 0, i = 0;
 	size_t                    len_of_buff = 0;
-	uint64_t                  generic_ptr;
+	uintptr_t                  generic_ptr;
+	uint16_t                  cmd_length_in_bytes = 0;
 
 	for (i = 0; i < num_cmd_buffers; i++) {
 		uint32_t                  *cmd_buf = NULL;
@@ -319,7 +350,6 @@ int cam_sensor_i2c_command_parser(struct i2c_settings_array *i2c_reg_settings,
 		 * It is not expected the same settings to
 		 * be spread across multiple cmd buffers
 		 */
-
 		CAM_DBG(CAM_SENSOR, "Total cmd Buf in Bytes: %d",
 			cmd_desc[i].length);
 
@@ -327,11 +357,11 @@ int cam_sensor_i2c_command_parser(struct i2c_settings_array *i2c_reg_settings,
 			continue;
 
 		rc = cam_mem_get_cpu_buf(cmd_desc[i].mem_handle,
-			(uint64_t *)&generic_ptr, &len_of_buff);
+			&generic_ptr, &len_of_buff);
 		cmd_buf = (uint32_t *)generic_ptr;
 		if (rc < 0) {
 			CAM_ERR(CAM_SENSOR,
-				"cmd hdl failed:%d, Err: %d, Buffer_len: %ld",
+				"cmd hdl failed:%d, Err: %d, Buffer_len: %zd",
 				cmd_desc[i].mem_handle, rc, len_of_buff);
 			return rc;
 		}
@@ -420,6 +450,23 @@ int cam_sensor_i2c_command_parser(struct i2c_settings_array *i2c_reg_settings,
 				}
 				break;
 			}
+			case CAMERA_SENSOR_CMD_TYPE_I2C_INFO: {
+				rc = cam_sensor_handle_slave_info(
+					io_master, cmd_buf);
+				if (rc) {
+					CAM_ERR(CAM_SENSOR,
+						"Handle slave info failed with rc: %d",
+						rc);
+					return rc;
+				}
+				cmd_length_in_bytes =
+					sizeof(struct cam_cmd_i2c_info);
+				cmd_buf +=
+					cmd_length_in_bytes / sizeof(uint32_t);
+				byte_cnt += cmd_length_in_bytes;
+				break;
+			}
+
 			case CAMERA_SENSOR_CMD_TYPE_I2C_CONT_RD:
 				rc = cam_sensor_handle_read(
 					(struct cam_cmd_i2c_continuous_rd *)
@@ -440,6 +487,75 @@ int cam_sensor_i2c_command_parser(struct i2c_settings_array *i2c_reg_settings,
 			}
 		}
 		i2c_reg_settings->is_settings_valid = 1;
+	}
+
+	return rc;
+}
+
+int cam_sensor_util_i2c_apply_setting(
+	struct camera_io_master *io_master_info,
+	struct i2c_settings_list *i2c_list)
+{
+	int32_t rc = 0;
+	uint32_t i, size;
+
+	switch (i2c_list->op_code) {
+	case CAM_SENSOR_I2C_WRITE_RANDOM: {
+		rc = camera_io_dev_write(io_master_info,
+			&(i2c_list->i2c_settings));
+		if (rc < 0) {
+			CAM_ERR(CAM_SENSOR,
+				"Failed to random write I2C settings: %d",
+				rc);
+			return rc;
+		}
+	break;
+	}
+	case CAM_SENSOR_I2C_WRITE_SEQ: {
+		rc = camera_io_dev_write_continuous(
+			io_master_info, &(i2c_list->i2c_settings), 0);
+		if (rc < 0) {
+			CAM_ERR(CAM_SENSOR,
+				"Failed to seq write I2C settings: %d",
+				rc);
+			return rc;
+		}
+	break;
+	}
+	case CAM_SENSOR_I2C_WRITE_BURST: {
+		rc = camera_io_dev_write_continuous(
+			io_master_info, &(i2c_list->i2c_settings), 1);
+		if (rc < 0) {
+			CAM_ERR(CAM_SENSOR,
+				"Failed to burst write I2C settings: %d",
+				rc);
+			return rc;
+		}
+	break;
+	}
+	case CAM_SENSOR_I2C_POLL: {
+		size = i2c_list->i2c_settings.size;
+		for (i = 0; i < size; i++) {
+			rc = camera_io_dev_poll(
+			io_master_info,
+			i2c_list->i2c_settings.reg_setting[i].reg_addr,
+			i2c_list->i2c_settings.reg_setting[i].reg_data,
+			i2c_list->i2c_settings.reg_setting[i].data_mask,
+			i2c_list->i2c_settings.addr_type,
+			i2c_list->i2c_settings.data_type,
+			i2c_list->i2c_settings.reg_setting[i].delay);
+			if (rc < 0) {
+				CAM_ERR(CAM_SENSOR,
+					"i2c poll apply setting Fail: %d", rc);
+				return rc;
+			}
+		}
+	break;
+	}
+	default:
+		CAM_ERR(CAM_SENSOR, "Wrong Opcode: %d", i2c_list->op_code);
+		rc = -EINVAL;
+	break;
 	}
 
 	return rc;
@@ -692,6 +808,7 @@ int32_t cam_sensor_update_power_settings(void *cmd_buf,
 {
 	int32_t rc = 0, tot_size = 0, last_cmd_type = 0;
 	int32_t i = 0, pwr_up = 0, pwr_down = 0;
+	struct cam_sensor_power_setting *pwr_settings;
 	void *ptr = cmd_buf, *scr;
 	struct cam_cmd_power *pwr_cmd = (struct cam_cmd_power *)cmd_buf;
 	struct common_header *cmm_hdr = (struct common_header *)cmd_buf;
@@ -736,14 +853,10 @@ int32_t cam_sensor_update_power_settings(void *cmd_buf,
 				CAM_WARN(CAM_SENSOR, "Un expected Command");
 
 			for (i = 0; i < pwr_cmd->count; i++, pwr_up++) {
-				power_info->
-					power_setting[pwr_up].seq_type =
-					pwr_cmd->power_settings[i].
-						power_seq_type;
-				power_info->
-					power_setting[pwr_up].config_val =
-					pwr_cmd->power_settings[i].
-						config_val_low;
+				power_info->power_setting[pwr_up].seq_type =
+				pwr_cmd->power_settings[i].power_seq_type;
+				power_info->power_setting[pwr_up].config_val =
+				pwr_cmd->power_settings[i].config_val_low;
 				power_info->power_setting[pwr_up].delay = 0;
 				if (i) {
 					scr = scr +
@@ -760,13 +873,9 @@ int32_t cam_sensor_update_power_settings(void *cmd_buf,
 					goto free_power_down_settings;
 				}
 				CAM_DBG(CAM_SENSOR,
-					"Seq Type[%d]: %d Config_val: %ld",
-					pwr_up,
-					power_info->
-						power_setting[pwr_up].seq_type,
-					power_info->
-						power_setting[pwr_up].
-						config_val);
+				"Seq Type[%d]: %d Config_val: %ld", pwr_up,
+				power_info->power_setting[pwr_up].seq_type,
+				power_info->power_setting[pwr_up].config_val);
 			}
 			last_cmd_type = CAMERA_SENSOR_CMD_TYPE_PWR_UP;
 			ptr = (void *) scr;
@@ -774,32 +883,38 @@ int32_t cam_sensor_update_power_settings(void *cmd_buf,
 		} else if (cmm_hdr->cmd_type == CAMERA_SENSOR_CMD_TYPE_WAIT) {
 			struct cam_cmd_unconditional_wait *wait_cmd =
 				(struct cam_cmd_unconditional_wait *)ptr;
-			if (wait_cmd->op_code ==
-				CAMERA_SENSOR_WAIT_OP_SW_UCND) {
-				if (last_cmd_type ==
-					CAMERA_SENSOR_CMD_TYPE_PWR_UP) {
-					if (pwr_up > 0)
-						power_info->
-							power_setting
-							[pwr_up - 1].delay +=
-							wait_cmd->delay;
-					else
-						CAM_ERR(CAM_SENSOR,
-							"Delay is expected only after valid power up setting");
-				} else if (last_cmd_type ==
-					CAMERA_SENSOR_CMD_TYPE_PWR_DOWN) {
-					if (pwr_down > 0)
-						power_info->
-							power_down_setting
-							[pwr_down - 1].delay +=
-							wait_cmd->delay;
-					else
-						CAM_ERR(CAM_SENSOR,
-							"Delay is expected only after valid power up setting");
+			if ((wait_cmd->op_code ==
+				CAMERA_SENSOR_WAIT_OP_SW_UCND) &&
+				(last_cmd_type ==
+				CAMERA_SENSOR_CMD_TYPE_PWR_UP)) {
+				if (pwr_up > 0) {
+					pwr_settings =
+					&power_info->power_setting[pwr_up - 1];
+					pwr_settings->delay +=
+						wait_cmd->delay;
+				} else {
+					CAM_ERR(CAM_SENSOR,
+					"Delay is expected only after valid power up setting");
 				}
-			} else
+			} else if ((wait_cmd->op_code ==
+				CAMERA_SENSOR_WAIT_OP_SW_UCND) &&
+				(last_cmd_type ==
+				CAMERA_SENSOR_CMD_TYPE_PWR_DOWN)) {
+				if (pwr_down > 0) {
+					pwr_settings =
+					&power_info->power_down_setting[
+						pwr_down - 1];
+					pwr_settings->delay +=
+						wait_cmd->delay;
+				} else {
+					CAM_ERR(CAM_SENSOR,
+					"Delay is expected only after valid power up setting");
+				}
+			} else {
 				CAM_DBG(CAM_SENSOR, "Invalid op code: %d",
 					wait_cmd->op_code);
+			}
+
 			tot_size = tot_size +
 				sizeof(struct cam_cmd_unconditional_wait);
 			if (tot_size > cmd_length) {
@@ -828,18 +943,14 @@ int32_t cam_sensor_update_power_settings(void *cmd_buf,
 				CAM_ERR(CAM_SENSOR, "Invalid Command");
 
 			for (i = 0; i < pwr_cmd->count; i++, pwr_down++) {
-				power_info->
-					power_down_setting[pwr_down].
-					seq_type =
-					pwr_cmd->power_settings[i].
-					power_seq_type;
-				power_info->
-					power_down_setting[pwr_down].
-					config_val =
-					pwr_cmd->power_settings[i].
-					config_val_low;
-				power_info->
-					power_down_setting[pwr_down].delay = 0;
+				pwr_settings =
+				&power_info->power_down_setting[pwr_down];
+				pwr_settings->seq_type =
+				pwr_cmd->power_settings[i].power_seq_type;
+				pwr_settings->config_val =
+				pwr_cmd->power_settings[i].config_val_low;
+				power_info->power_down_setting[pwr_down].delay
+					= 0;
 				if (i) {
 					scr = scr +
 						sizeof(
@@ -857,13 +968,8 @@ int32_t cam_sensor_update_power_settings(void *cmd_buf,
 				}
 				CAM_DBG(CAM_SENSOR,
 					"Seq Type[%d]: %d Config_val: %ld",
-					pwr_down,
-					power_info->
-						power_down_setting[pwr_down].
-						seq_type,
-					power_info->
-						power_down_setting[pwr_down].
-						config_val);
+					pwr_down, pwr_settings->seq_type,
+					pwr_settings->config_val);
 			}
 			last_cmd_type = CAMERA_SENSOR_CMD_TYPE_PWR_DOWN;
 			ptr = (void *) scr;
@@ -972,7 +1078,7 @@ int cam_get_dt_power_setting_data(struct device_node *of_node,
 
 	kfree(power_info->power_down_setting);
 	power_info->power_down_setting =
-		kzalloc(sizeof(*ps) * count, GFP_KERNEL);
+		kcalloc(count, sizeof(*ps), GFP_KERNEL);
 
 	if (!power_info->power_down_setting) {
 		CAM_ERR(CAM_SENSOR, "failed");
@@ -1240,6 +1346,24 @@ int msm_camera_pinctrl_init(
 	return 0;
 }
 
+int cam_sensor_bob_pwm_mode_switch(struct cam_hw_soc_info *soc_info,
+	int bob_reg_idx, bool flag)
+{
+	int rc = 0;
+	uint32_t op_current =
+		(flag == true) ? soc_info->rgltr_op_mode[bob_reg_idx] : 0;
+
+	if (soc_info->rgltr[bob_reg_idx] != NULL) {
+		rc = regulator_set_load(soc_info->rgltr[bob_reg_idx],
+			op_current);
+		if (rc)
+			CAM_WARN(CAM_SENSOR,
+				"BoB PWM SetLoad failed rc: %d", rc);
+	}
+
+	return rc;
+}
+
 int msm_cam_sensor_handle_reg_gpio(int seq_type,
 	struct msm_camera_gpio_num_info *gpio_num_info, int val)
 {
@@ -1327,6 +1451,13 @@ int cam_sensor_core_power_up(struct cam_sensor_power_ctrl_t *ctrl,
 	for (index = 0; index < ctrl->power_setting_size; index++) {
 		CAM_DBG(CAM_SENSOR, "index: %d", index);
 		power_setting = &ctrl->power_setting[index];
+		if (!power_setting) {
+			CAM_ERR(CAM_SENSOR,
+				"Invalid power up settings for index %d",
+				index);
+			return -EINVAL;
+		}
+
 		CAM_DBG(CAM_SENSOR, "seq_type %d", power_setting->seq_type);
 
 		switch (power_setting->seq_type) {
@@ -1650,12 +1781,12 @@ static int cam_config_mclk_reg(struct cam_sensor_power_ctrl_t *ctrl,
 	return rc;
 }
 
-int msm_camera_power_down(struct cam_sensor_power_ctrl_t *ctrl,
+int cam_sensor_util_power_down(struct cam_sensor_power_ctrl_t *ctrl,
 		struct cam_hw_soc_info *soc_info)
 {
 	int index = 0, ret = 0, num_vreg = 0, i;
 	struct cam_sensor_power_setting *pd = NULL;
-	struct cam_sensor_power_setting *ps;
+	struct cam_sensor_power_setting *ps = NULL;
 	struct msm_camera_gpio_num_info *gpio_num_info = NULL;
 
 	CAM_DBG(CAM_SENSOR, "Enter");
@@ -1675,6 +1806,13 @@ int msm_camera_power_down(struct cam_sensor_power_ctrl_t *ctrl,
 	for (index = 0; index < ctrl->power_down_setting_size; index++) {
 		CAM_DBG(CAM_SENSOR, "index %d",  index);
 		pd = &ctrl->power_down_setting[index];
+		if (!pd) {
+			CAM_ERR(CAM_SENSOR,
+				"Invalid power down settings for index %d",
+				index);
+			return -EINVAL;
+		}
+
 		ps = NULL;
 		CAM_DBG(CAM_SENSOR, "type %d",  pd->seq_type);
 		switch (pd->seq_type) {

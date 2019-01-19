@@ -738,7 +738,7 @@ static struct msm_vidc_ctrl msm_venc_ctrls[] = {
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_METADATA_MBI) |
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_YUV_STATS)|
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_ROI_QP)|
-			(1UL << V4L2_MPEG_VIDC_EXTRADATA_ENC_FRAME_QP)
+			(1 << V4L2_MPEG_VIDC_EXTRADATA_PQ_INFO)
 			),
 		.qmenu = mpeg_video_vidc_extradata,
 	},
@@ -1393,7 +1393,6 @@ int msm_venc_s_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 	struct hal_h264_entropy_control h264_entropy_control;
 	struct hal_intra_period intra_period;
 	struct hal_idr_period idr_period;
-	struct hal_vpe_rotation vpe_rotation;
 	struct hal_intra_refresh intra_refresh;
 	struct hal_multi_slice_control multi_slice_control;
 	struct hal_h264_db_control h264_db_control;
@@ -1548,10 +1547,6 @@ int msm_venc_s_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 	}
 	case V4L2_CID_MPEG_VIDC_IMG_GRID_DIMENSION:
 	{
-		int i = 0, j = 0;
-		u32 width = 0, height = 0;
-		u32 trows, tcols;
-
 		property_id = HAL_CONFIG_HEIC_GRID_ENABLE;
 		if (inst->fmts[CAPTURE_PORT].fourcc != V4L2_PIX_FMT_HEVC) {
 			dprintk(VIDC_ERR, "Grid is supported only for HEVC\n");
@@ -1566,38 +1561,6 @@ int msm_venc_s_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		grid_enable.grid_enable = ctrl->val;
 		inst->img_grid_dimension = ctrl->val;
 		pdata = &grid_enable;
-
-		/* Update tile info table */
-		width = inst->prop.width[OUTPUT_PORT];
-		height = inst->prop.height[OUTPUT_PORT];
-		tcols = (width + inst->img_grid_dimension - 1) /
-					inst->img_grid_dimension;
-		trows = (height + inst->img_grid_dimension - 1) /
-					inst->img_grid_dimension;
-		inst->tinfo.count = trows * tcols;
-		if (inst->tinfo.count > MAX_HEIC_TILES_COUNT) {
-			dprintk(VIDC_ERR, "Tiles count exceeds maximum\n");
-			rc = -ENOTSUPP;
-			break;
-		}
-
-		dprintk(VIDC_DBG,
-			"Grid dimension %d width %d height %d row %d col %d\n",
-			inst->img_grid_dimension, width, height,
-			trows, tcols);
-
-		for (j = 0; j < trows; ++j) {
-			for (i = 0; i < tcols; ++i) {
-				inst->tinfo.tile_rects[j*tcols+i].left =
-					(i * inst->img_grid_dimension);
-				inst->tinfo.tile_rects[j*tcols+i].top =
-					(j * inst->img_grid_dimension);
-				inst->tinfo.tile_rects[j*tcols+i].width =
-					inst->img_grid_dimension;
-				inst->tinfo.tile_rects[j*tcols+i].height =
-					inst->img_grid_dimension;
-			}
-		}
 		break;
 	}
 	case V4L2_CID_MPEG_VIDEO_BITRATE_PEAK:
@@ -1728,28 +1691,12 @@ int msm_venc_s_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_ROTATION:
 	{
-		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_FLIP);
-		property_id = HAL_PARAM_VPE_ROTATION;
-		vpe_rotation.rotate = msm_comm_v4l2_to_hal(
-				V4L2_CID_MPEG_VIDC_VIDEO_ROTATION,
-				ctrl->val);
-		vpe_rotation.flip = msm_comm_v4l2_to_hal(
-				V4L2_CID_MPEG_VIDC_VIDEO_FLIP,
-				temp_ctrl->val);
-		pdata = &vpe_rotation;
+		dprintk(VIDC_DBG, "Rotation %d\n", ctrl->val);
 		break;
 	}
 	case V4L2_CID_MPEG_VIDC_VIDEO_FLIP:
 	{
-		temp_ctrl = TRY_GET_CTRL(V4L2_CID_MPEG_VIDC_VIDEO_ROTATION);
-		property_id = HAL_PARAM_VPE_ROTATION;
-		vpe_rotation.rotate = msm_comm_v4l2_to_hal(
-				V4L2_CID_MPEG_VIDC_VIDEO_ROTATION,
-				temp_ctrl->val);
-		vpe_rotation.flip = msm_comm_v4l2_to_hal(
-				V4L2_CID_MPEG_VIDC_VIDEO_FLIP,
-				ctrl->val);
-		pdata = &vpe_rotation;
+		dprintk(VIDC_DBG, "Flip %d\n", ctrl->val);
 		break;
 	}
 	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MODE: {
@@ -1999,7 +1946,7 @@ int msm_venc_s_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 	case V4L2_CID_MPEG_VIDC_VIDEO_USELTRFRAME:
 		property_id = HAL_CONFIG_VENC_USELTRFRAME;
 		use_ltr.ref_ltr = ctrl->val;
-		use_ltr.use_constraint = false;
+		use_ltr.use_constraint = true;
 		use_ltr.frames = 0;
 		pdata = &use_ltr;
 		break;

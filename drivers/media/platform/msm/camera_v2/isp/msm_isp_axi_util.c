@@ -1731,10 +1731,38 @@ void msm_isp_halt_send_error(struct vfe_device *vfe_dev, uint32_t event)
 	struct msm_vfe_axi_halt_cmd halt_cmd;
 	struct vfe_device *temp_dev = NULL;
 	uint32_t irq_status0 = 0, irq_status1 = 0;
+	struct vfe_device *vfe_dev_other = NULL;
+	uint32_t vfe_id_other = 0;
+	unsigned long flags;
 
 	if (atomic_read(&vfe_dev->error_info.overflow_state) !=
 		NO_OVERFLOW)
 		/* Recovery is already in Progress */
+		return;
+
+	/* if there are no active streams - do not start recovery */
+	if (vfe_dev->is_split) {
+		if (vfe_dev->pdev->id == ISP_VFE0)
+			vfe_id_other = ISP_VFE1;
+		else
+			vfe_id_other = ISP_VFE0;
+
+		spin_lock_irqsave(
+			&vfe_dev->common_data->common_dev_data_lock, flags);
+		vfe_dev_other = vfe_dev->common_data->dual_vfe_res->
+			vfe_dev[vfe_id_other];
+		if (!vfe_dev->axi_data.num_active_stream ||
+			!vfe_dev_other->axi_data.num_active_stream) {
+			spin_unlock_irqrestore(
+				&vfe_dev->common_data->common_dev_data_lock,
+				flags);
+			pr_err("%s:skip the recovery as no active streams\n",
+				 __func__);
+			return;
+		}
+		spin_unlock_irqrestore(
+			&vfe_dev->common_data->common_dev_data_lock, flags);
+	} else if (!vfe_dev->axi_data.num_active_stream)
 		return;
 
 	if (event == ISP_EVENT_PING_PONG_MISMATCH &&
@@ -3834,7 +3862,7 @@ static int msm_isp_stream_axi_cfg_update(struct vfe_device *vfe_dev,
 
 int msm_isp_update_axi_stream(struct vfe_device *vfe_dev, void *arg)
 {
-	int rc = 0, i;
+	int rc = 0, i, j, k;
 	struct msm_vfe_axi_stream *stream_info;
 	struct msm_vfe_axi_stream_update_cmd *update_cmd = arg;
 	struct msm_vfe_axi_stream_cfg_update_info *update_info = NULL;
@@ -3871,7 +3899,9 @@ int msm_isp_update_axi_stream(struct vfe_device *vfe_dev, void *arg)
 			update_cmd->update_type !=
 			UPDATE_STREAM_REMOVE_BUFQ &&
 			update_cmd->update_type !=
-			UPDATE_STREAM_SW_FRAME_DROP) {
+			UPDATE_STREAM_SW_FRAME_DROP &&
+			update_cmd->update_type !=
+			UPDATE_STREAM_REQUEST_FRAMES_VER2) {
 			pr_err("%s: Invalid stream state %d, update cmd %d\n",
 				__func__, stream_info->state,
 				stream_info->stream_id);
@@ -4109,8 +4139,16 @@ int msm_isp_update_axi_stream(struct vfe_device *vfe_dev, void *arg)
 			}
 			vfe_idx = msm_isp_get_vfe_idx_for_stream(
 				vfe_dev, stream_info);
-			msm_isp_stream_axi_cfg_update(vfe_dev, stream_info,
-				update_info);
+			for (j = 0; j < stream_info->num_planes; j++) {
+				stream_info->plane_cfg[vfe_idx][j] =
+					update_info->plane_cfg[j];
+				for (k = 0; k < stream_info->num_isp; k++) {
+					vfe_dev = stream_info->vfe_dev[k];
+					vfe_dev->hw_info->vfe_ops.axi_ops.
+						cfg_wm_reg(vfe_dev,
+						stream_info, j);
+				}
+			}
 		}
 		break;
 	}

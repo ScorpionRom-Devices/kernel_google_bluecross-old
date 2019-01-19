@@ -19,6 +19,7 @@
 #include "cam_debug_util.h"
 #include "cam_res_mgr_api.h"
 #include "../cam_fw_update/fw_update.h"
+#include "cam_common_util.h"
 
 static struct cam_ois_timer_t ois_timer;
 DEFINE_MSM_MUTEX(ois_shift_mutex);
@@ -87,6 +88,7 @@ int32_t cam_ois_construct_default_power_setting(
 
 free_power_settings:
 	kfree(power_info->power_setting);
+	power_info->power_setting = NULL;
 	return rc;
 }
 
@@ -109,7 +111,7 @@ static int cam_ois_get_dev_handle(struct cam_ois_ctrl_t *o_ctrl,
 		CAM_ERR(CAM_OIS, "Device is already acquired");
 		return -EFAULT;
 	}
-	if (copy_from_user(&ois_acq_dev, (void __user *) cmd->handle,
+	if (copy_from_user(&ois_acq_dev, u64_to_user_ptr(cmd->handle),
 		sizeof(ois_acq_dev)))
 		return -EFAULT;
 
@@ -125,7 +127,7 @@ static int cam_ois_get_dev_handle(struct cam_ois_ctrl_t *o_ctrl,
 	o_ctrl->bridge_intf.session_hdl = ois_acq_dev.session_handle;
 
 	CAM_DBG(CAM_OIS, "Device Handle: %d", ois_acq_dev.device_handle);
-	if (copy_to_user((void __user *) cmd->handle, &ois_acq_dev,
+	if (copy_to_user(u64_to_user_ptr(cmd->handle), &ois_acq_dev,
 		sizeof(struct cam_sensor_acquire_dev))) {
 		CAM_ERR(CAM_OIS, "ACQUIRE_DEV: copy to user failed");
 		return -EFAULT;
@@ -223,7 +225,7 @@ static int cam_ois_power_down(struct cam_ois_ctrl_t *o_ctrl)
 		return -EINVAL;
 	}
 
-	rc = msm_camera_power_down(power_info, soc_info);
+	rc = cam_sensor_util_power_down(power_info, soc_info);
 	if (rc) {
 		CAM_ERR(CAM_OIS, "power down the core is failed:%d", rc);
 		return rc;
@@ -265,17 +267,13 @@ static int cam_ois_apply_settings(struct cam_ois_ctrl_t *o_ctrl,
 			size = i2c_list->i2c_settings.size;
 			for (i = 0; i < size; i++) {
 				rc = camera_io_dev_poll(
-					&(o_ctrl->io_master_info),
-					i2c_list->i2c_settings.
-						reg_setting[i].reg_addr,
-					i2c_list->i2c_settings.
-						reg_setting[i].reg_data,
-					i2c_list->i2c_settings.
-						reg_setting[i].data_mask,
-					i2c_list->i2c_settings.addr_type,
-					i2c_list->i2c_settings.data_type,
-					i2c_list->i2c_settings.
-						reg_setting[i].delay);
+				&(o_ctrl->io_master_info),
+				i2c_list->i2c_settings.reg_setting[i].reg_addr,
+				i2c_list->i2c_settings.reg_setting[i].reg_data,
+				i2c_list->i2c_settings.reg_setting[i].data_mask,
+				i2c_list->i2c_settings.addr_type,
+				i2c_list->i2c_settings.data_type,
+				i2c_list->i2c_settings.reg_setting[i].delay);
 				if (rc < 0) {
 					CAM_ERR(CAM_OIS,
 						"i2c poll apply setting Fail");
@@ -502,7 +500,7 @@ static void cam_ois_read_work(struct work_struct *work)
 	ois_timer_in = container_of(work, struct cam_ois_timer_t, g_work);
 	get_monotonic_boottime(&ts);
 	rc = camera_io_dev_read_seq(&ois_timer_in->o_ctrl->io_master_info,
-		0xE001, &buf[0], CAMERA_SENSOR_I2C_TYPE_WORD, 6);
+		0xE001, &buf[0], CAMERA_SENSOR_I2C_TYPE_WORD, CAMERA_SENSOR_I2C_TYPE_WORD, 6);
 
 	if (rc != 0) {
 		ois_timer.i2c_fail_count++;
@@ -704,7 +702,7 @@ static int cam_ois_read_reg(struct cam_ois_ctrl_t *o_ctrl,
 	}
 
 	rc = camera_io_dev_read_seq(&o_ctrl->io_master_info,
-		addr, buf, CAMERA_SENSOR_I2C_TYPE_WORD, num_bytes);
+		addr, buf, CAMERA_SENSOR_I2C_TYPE_WORD, CAMERA_SENSOR_I2C_TYPE_WORD, num_bytes);
 
 	if (rc) {
 		CAM_ERR(CAM_OIS, "camera_io_dev_read_seq failed!");
@@ -732,12 +730,12 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 	int32_t                         i = 0;
 	uint32_t                        total_cmd_buf_in_bytes = 0;
 	struct common_header           *cmm_hdr = NULL;
-	uint64_t                        generic_ptr;
+	uintptr_t                       generic_ptr;
 	struct cam_control             *ioctl_ctrl = NULL;
 	struct cam_config_dev_cmd       dev_config;
 	struct i2c_settings_array      *i2c_reg_settings = NULL;
 	struct cam_cmd_buf_desc        *cmd_desc = NULL;
-	uint64_t                        generic_pkt_addr;
+	uintptr_t                       generic_pkt_addr;
 	size_t                          pkt_len;
 	struct cam_packet              *csl_packet = NULL;
 	size_t                          len_of_buff = 0;
@@ -750,11 +748,12 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 	stReCalib                       *cal_result;
 
 	ioctl_ctrl = (struct cam_control *)arg;
-	if (copy_from_user(&dev_config, (void __user *) ioctl_ctrl->handle,
+	if (copy_from_user(&dev_config,
+		u64_to_user_ptr(ioctl_ctrl->handle),
 		sizeof(dev_config)))
 		return -EFAULT;
 	rc = cam_mem_get_cpu_buf(dev_config.packet_handle,
-		(uint64_t *)&generic_pkt_addr, &pkt_len);
+		&generic_pkt_addr, &pkt_len);
 	if (rc) {
 		CAM_ERR(CAM_OIS,
 			"error in converting command Handle Error: %d", rc);
@@ -769,7 +768,7 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 	}
 
 	csl_packet = (struct cam_packet *)
-		(generic_pkt_addr + dev_config.offset);
+		(generic_pkt_addr + (uint32_t)dev_config.offset);
 	switch (csl_packet->header.op_code & 0xFFFFFF) {
 	case CAM_OIS_PACKET_OPCODE_INIT:
 		offset = (uint32_t *)&csl_packet->payload;
@@ -783,7 +782,7 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 				continue;
 
 			rc = cam_mem_get_cpu_buf(cmd_desc[i].mem_handle,
-				(uint64_t *)&generic_ptr, &len_of_buff);
+				&generic_ptr, &len_of_buff);
 			if (rc < 0) {
 				CAM_ERR(CAM_OIS, "Failed to get cpu buf");
 				return rc;
@@ -829,6 +828,7 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 				i2c_reg_settings->is_settings_valid = 1;
 				i2c_reg_settings->request_id = 0;
 				rc = cam_sensor_i2c_command_parser(
+					&o_ctrl->io_master_info,
 					i2c_reg_settings,
 					&cmd_desc[i], 1);
 				if (rc < 0) {
@@ -837,14 +837,15 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 					return rc;
 				}
 			} else if ((o_ctrl->is_ois_calib != 0) &&
-				(o_ctrl->i2c_calib_data.
-					is_settings_valid == 0)) {
+				(o_ctrl->i2c_calib_data.is_settings_valid ==
+				0)) {
 				CAM_DBG(CAM_OIS,
 					"Received calib settings");
 				i2c_reg_settings = &(o_ctrl->i2c_calib_data);
 				i2c_reg_settings->is_settings_valid = 1;
 				i2c_reg_settings->request_id = 0;
 				rc = cam_sensor_i2c_command_parser(
+					&o_ctrl->io_master_info,
 					i2c_reg_settings,
 					&cmd_desc[i], 1);
 				if (rc < 0) {
@@ -916,7 +917,8 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		i2c_reg_settings = &(o_ctrl->i2c_mode_data);
 		i2c_reg_settings->is_settings_valid = 1;
 		i2c_reg_settings->request_id = 0;
-		rc = cam_sensor_i2c_command_parser(i2c_reg_settings,
+		rc = cam_sensor_i2c_command_parser(&o_ctrl->io_master_info,
+			i2c_reg_settings,
 			cmd_desc, 1);
 		if (rc < 0) {
 			CAM_ERR(CAM_OIS, "OIS pkt parsing failed: %d", rc);
@@ -959,7 +961,7 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		}
 
 		rc = cam_mem_get_cpu_buf(cmd_desc->mem_handle,
-			(uint64_t *)&generic_ptr, &len_of_buff);
+			&generic_ptr, &len_of_buff);
 		if (rc < 0) {
 			CAM_ERR(CAM_OIS, "Failed to get cpu buf");
 			return rc;
@@ -987,7 +989,7 @@ static int cam_ois_pkt_parse(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		offset += (csl_packet->cmd_buf_offset / sizeof(uint32_t));
 		cmd_desc = (struct cam_cmd_buf_desc *)(offset);
 		rc = cam_mem_get_cpu_buf(cmd_desc[0].mem_handle,
-			(uint64_t *)&generic_ptr, &len_of_buff);
+			&generic_ptr, &len_of_buff);
 		if (rc < 0) {
 			CAM_ERR(CAM_OIS, "Failed to get cpu buf");
 			return rc;
@@ -1033,6 +1035,15 @@ void cam_ois_shutdown(struct cam_ois_ctrl_t *o_ctrl)
 		o_ctrl->bridge_intf.session_hdl = -1;
 	}
 
+	if (o_ctrl->i2c_mode_data.is_settings_valid == 1)
+		delete_request(&o_ctrl->i2c_mode_data);
+
+	if (o_ctrl->i2c_calib_data.is_settings_valid == 1)
+		delete_request(&o_ctrl->i2c_calib_data);
+
+	if (o_ctrl->i2c_init_data.is_settings_valid == 1)
+		delete_request(&o_ctrl->i2c_init_data);
+
 	o_ctrl->cam_ois_state = CAM_OIS_INIT;
 }
 
@@ -1049,8 +1060,14 @@ int cam_ois_driver_cmd(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 	struct cam_ois_query_cap_t     ois_cap = {0};
 	struct cam_control            *cmd = (struct cam_control *)arg;
 
-	if (!o_ctrl) {
-		CAM_ERR(CAM_OIS, "e_ctrl is NULL");
+	if (!o_ctrl || !arg) {
+		CAM_ERR(CAM_OIS, "Invalid arguments");
+		return -EINVAL;
+	}
+
+	if (cmd->handle_type != CAM_HANDLE_USER_POINTER) {
+		CAM_ERR(CAM_OIS, "Invalid handle type: %d",
+			cmd->handle_type);
 		return -EINVAL;
 	}
 
@@ -1059,7 +1076,7 @@ int cam_ois_driver_cmd(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 	case CAM_QUERY_CAP:
 		ois_cap.slot_info = o_ctrl->soc_info.index;
 
-		if (copy_to_user((void __user *) cmd->handle,
+		if (copy_to_user(u64_to_user_ptr(cmd->handle),
 			&ois_cap,
 			sizeof(struct cam_ois_query_cap_t))) {
 			CAM_ERR(CAM_OIS, "Failed Copy to User");
@@ -1124,6 +1141,16 @@ int cam_ois_driver_cmd(struct cam_ois_ctrl_t *o_ctrl, void *arg)
 		o_ctrl->bridge_intf.link_hdl = -1;
 		o_ctrl->bridge_intf.session_hdl = -1;
 		o_ctrl->cam_ois_state = CAM_OIS_INIT;
+
+		if (o_ctrl->i2c_mode_data.is_settings_valid == 1)
+			delete_request(&o_ctrl->i2c_mode_data);
+
+		if (o_ctrl->i2c_calib_data.is_settings_valid == 1)
+			delete_request(&o_ctrl->i2c_calib_data);
+
+		if (o_ctrl->i2c_init_data.is_settings_valid == 1)
+			delete_request(&o_ctrl->i2c_init_data);
+
 		break;
 	case CAM_STOP_DEV:
 		if (o_ctrl->cam_ois_state != CAM_OIS_START) {

@@ -4025,6 +4025,11 @@ static void smbchg_chg_led_brightness_set(struct led_classdev *cdev,
 	u8 reg;
 	int rc;
 
+	if (!is_bms_psy_present(chip)) {
+		dev_err(chip->dev, "Couldn't access bms psy\n");
+		return;
+	}
+
 	reg = (value > LED_OFF) ? CHG_LED_ON << CHG_LED_SHIFT :
 		CHG_LED_OFF << CHG_LED_SHIFT;
 	pval.intval = value > LED_OFF ? 1 : 0;
@@ -4071,6 +4076,11 @@ static void smbchg_chg_led_blink_set(struct smbchg_chip *chip,
 	union power_supply_propval pval = {0, };
 	u8 reg;
 	int rc;
+
+	if (!is_bms_psy_present(chip)) {
+		dev_err(chip->dev, "Couldn't access bms psy\n");
+		return;
+	}
 
 	pval.intval = (blinking == 0) ? 0 : 1;
 	power_supply_set_property(chip->bms_psy, POWER_SUPPLY_PROP_HI_POWER,
@@ -7368,8 +7378,8 @@ static int smb_parse_wipower_map_dt(struct smbchg_chip *chip,
 
 	data = prop->value;
 	num = total_elements / RANGE_ENTRY;
-	map->entries = devm_kzalloc(chip->dev,
-			num * sizeof(struct ilim_entry), GFP_KERNEL);
+	map->entries = devm_kcalloc(chip->dev,
+			num, sizeof(struct ilim_entry), GFP_KERNEL);
 	if (!map->entries)
 		return -ENOMEM;
 

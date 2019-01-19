@@ -2084,7 +2084,7 @@ static int domain_context_mapping_one(struct dmar_domain *domain,
 	 * than default.  Unnecessary for PT mode.
 	 */
 	if (translation != CONTEXT_TT_PASS_THROUGH) {
-		for (agaw = domain->agaw; agaw != iommu->agaw; agaw--) {
+		for (agaw = domain->agaw; agaw > iommu->agaw; agaw--) {
 			ret = -ENOMEM;
 			pgd = phys_to_virt(dma_pte_addr(pgd));
 			if (!dma_pte_present(pgd))
@@ -2098,7 +2098,7 @@ static int domain_context_mapping_one(struct dmar_domain *domain,
 			translation = CONTEXT_TT_MULTI_LEVEL;
 
 		context_set_address_root(context, virt_to_phys(pgd));
-		context_set_address_width(context, iommu->agaw);
+		context_set_address_width(context, agaw);
 	} else {
 		/*
 		 * In pass through mode, AW must be programmed to
@@ -3163,7 +3163,7 @@ static int copy_translation_tables(struct intel_iommu *iommu)
 	/* This is too big for the stack - allocate it from slab */
 	ctxt_table_entries = ext ? 512 : 256;
 	ret = -ENOMEM;
-	ctxt_tbls = kzalloc(ctxt_table_entries * sizeof(void *), GFP_KERNEL);
+	ctxt_tbls = kcalloc(ctxt_table_entries, sizeof(void *), GFP_KERNEL);
 	if (!ctxt_tbls)
 		goto out_unmap;
 
@@ -3254,7 +3254,7 @@ static int __init init_dmars(void)
 		struct deferred_flush_data *dfd = per_cpu_ptr(&deferred_flush,
 							      cpu);
 
-		dfd->tables = kzalloc(g_num_of_iommus *
+		dfd->tables = kcalloc(g_num_of_iommus,
 				      sizeof(struct deferred_flush_table),
 				      GFP_KERNEL);
 		if (!dfd->tables) {
@@ -4182,7 +4182,7 @@ static int iommu_suspend(void)
 	unsigned long flag;
 
 	for_each_active_iommu(iommu, drhd) {
-		iommu->iommu_state = kzalloc(sizeof(u32) * MAX_SR_DMAR_REGS,
+		iommu->iommu_state = kcalloc(MAX_SR_DMAR_REGS, sizeof(u32),
 						 GFP_ATOMIC);
 		if (!iommu->iommu_state)
 			goto nomem;

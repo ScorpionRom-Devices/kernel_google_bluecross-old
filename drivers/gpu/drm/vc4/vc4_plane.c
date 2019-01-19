@@ -239,7 +239,7 @@ static void vc4_dlist_write(struct vc4_plane_state *vc4_state, u32 val)
 {
 	if (vc4_state->dlist_count == vc4_state->dlist_size) {
 		u32 new_size = max(4u, vc4_state->dlist_count * 2);
-		u32 *new_dlist = kmalloc(new_size * 4, GFP_KERNEL);
+		u32 *new_dlist = kmalloc_array(new_size, 4, GFP_KERNEL);
 
 		if (!new_dlist)
 			return;
@@ -352,6 +352,7 @@ static int vc4_plane_setup_clipping_and_scaling(struct drm_plane_state *state)
 		if (vc4_state->is_unity)
 			vc4_state->x_scaling[0] = VC4_SCALING_PPF;
 	} else {
+		vc4_state->is_yuv = false;
 		vc4_state->x_scaling[1] = VC4_SCALING_NONE;
 		vc4_state->y_scaling[1] = VC4_SCALING_NONE;
 	}

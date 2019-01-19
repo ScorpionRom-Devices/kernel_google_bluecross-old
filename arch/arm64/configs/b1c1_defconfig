@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/arm64 4.9.148 Kernel Configuration
+# Linux/arm64 4.9.151 Kernel Configuration
 #
 CONFIG_ARM64=y
 CONFIG_64BIT=y
@@ -1520,8 +1520,6 @@ CONFIG_DM_REQ_CRYPT=y
 CONFIG_DM_UEVENT=y
 # CONFIG_DM_FLAKEY is not set
 CONFIG_DM_VERITY=y
-# CONFIG_DM_VERITY_HASH_PREFETCH_MIN_SIZE_128 is not set
-CONFIG_DM_VERITY_HASH_PREFETCH_MIN_SIZE=1
 CONFIG_DM_VERITY_FEC=y
 # CONFIG_DM_SWITCH is not set
 # CONFIG_DM_LOG_WRITES is not set
