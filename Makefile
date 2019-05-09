@@ -1,6 +1,6 @@
 VERSION = 4
 PATCHLEVEL = 9
-SUBLEVEL = 168
+SUBLEVEL = 174
 EXTRAVERSION =
 NAME = Roaring Lionus
 
@@ -511,7 +511,7 @@ ifeq ($(cc-name),clang)
 ifneq ($(CROSS_COMPILE),)
 CLANG_TRIPLE    ?= $(CROSS_COMPILE)
 CLANG_FLAGS	:= --target=$(notdir $(CLANG_TRIPLE:%-=%))
-GCC_TOOLCHAIN_DIR := $(dir $(shell which $(LD)))
+GCC_TOOLCHAIN_DIR := $(dir $(shell which $(CROSS_COMPILE)elfedit))
 CLANG_FLAGS	+= --prefix=$(GCC_TOOLCHAIN_DIR)
 GCC_TOOLCHAIN	:= $(realpath $(GCC_TOOLCHAIN_DIR)/..)
 endif
@@ -692,7 +692,7 @@ export LDFINAL_vmlinux LDFLAGS_FINAL_vmlinux
 endif
 
 ifdef CONFIG_CFI_CLANG
-cfi-clang-flags	+= -fsanitize=cfi
+cfi-clang-flags	+= -fsanitize=cfi $(call cc-option, -fsplit-lto-unit)
 DISABLE_CFI_CLANG := -fno-sanitize=cfi
 ifdef CONFIG_MODULES
 cfi-clang-flags	+= -fsanitize-cfi-cross-dso
@@ -743,8 +743,7 @@ export DISABLE_SAFESTACK
 endif
 
 ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
-KBUILD_CFLAGS	+= $(call cc-option,-Oz,-Os)
-KBUILD_CFLAGS	+= $(call cc-disable-warning,maybe-uninitialized,)
+KBUILD_CFLAGS	+= -Os $(call cc-disable-warning,maybe-uninitialized,)
 else
 ifdef CONFIG_PROFILE_ALL_BRANCHES
 KBUILD_CFLAGS	+= -O2 $(call cc-disable-warning,maybe-uninitialized,)
@@ -812,6 +811,7 @@ KBUILD_CPPFLAGS += $(call cc-option,-Qunused-arguments,)
 KBUILD_CFLAGS += $(call cc-disable-warning, format-invalid-specifier)
 KBUILD_CFLAGS += $(call cc-disable-warning, gnu)
 KBUILD_CFLAGS += $(call cc-disable-warning, address-of-packed-member)
+KBUILD_CFLAGS += $(call cc-disable-warning, duplicate-decl-specifier)
 # Quiet clang warning: comparison of unsigned expression < 0 is always false
 KBUILD_CFLAGS += $(call cc-disable-warning, tautological-compare)
 # CLANG uses a _MergedGlobals as optimization, but this breaks modpost, as the
