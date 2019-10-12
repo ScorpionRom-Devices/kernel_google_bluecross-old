@@ -667,9 +667,9 @@ CONFIG_CRYPTO_CRC32_ARM64=y
 CONFIG_XZ_DEC=y
 CONFIG_QMI_ENCDEC=y
 #
-# Unicornblood special additions
+# Special additions
 #
-CONFIG_LOCALVERSION="-unicornblood-pixel3-q"
+CONFIG_LOCALVERSION="-bluecross-q"
 # CONFIG_LOCALVERSION_AUTO is not set
 CONFIG_QCA_CLD_WLAN=y
 CONFIG_QCACLD_WLAN_LFR3=y
