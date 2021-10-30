@@ -680,7 +680,7 @@ CONFIG_QMI_ENCDEC=y
 #
 # special additions
 #
-CONFIG_LOCALVERSION="-srx-v4-bluecross-r"
+CONFIG_LOCALVERSION="-srx-bluecross-s"
 # CONFIG_LOCALVERSION_AUTO is not set
 CONFIG_QCA_CLD_WLAN=y
 CONFIG_QCACLD_WLAN_LFR3=y
